@@ -146,7 +146,10 @@ namespace winrt::Microsoft::Terminal::Control::implementation
         void ClearMark();
         void ClearAllMarks();
         void ScrollToMark(const Control::ScrollToMarkDirection& direction);
-
+        void SelectCommand(const bool goUp);
+        void SelectOutput(const bool goUp);
+        void ContextMenuSelectCommand();
+        void ContextMenuSelectOutput();
 #pragma endregion
 
 #pragma region ITerminalInput
@@ -212,6 +215,12 @@ namespace winrt::Microsoft::Terminal::Control::implementation
 
         uint64_t OwningHwnd();
         void OwningHwnd(uint64_t owner);
+
+        void AnchorContextMenu(til::point viewportRelativeCharacterPosition);
+        void SelectCommandWithAnchor(const bool goUp, const til::point anchor);
+        void SelectOutputWithAnchor(const bool goUp, const til::point anchor);
+        bool ShouldShowSelectCommand();
+        bool ShouldShowSelectOutput();
 
         RUNTIME_SETTING(double, Opacity, _settings->Opacity());
         RUNTIME_SETTING(bool, UseAcrylic, _settings->UseAcrylic());
@@ -297,8 +306,9 @@ namespace winrt::Microsoft::Terminal::Control::implementation
         std::unique_ptr<til::throttled_func_trailing<>> _updatePatternLocations;
         std::shared_ptr<ThrottledFuncTrailing<Control::ScrollPositionChangedArgs>> _updateScrollBar;
 
-        void _setupDispatcherAndCallbacks();
+        til::point _contextMenuBufferPosition{ 0, 0 };
 
+        void _setupDispatcherAndCallbacks();
         bool _setFontSizeUnderLock(float fontSize);
         void _updateFont(const bool initialUpdate = false);
         void _refreshSizeUnderLock();
