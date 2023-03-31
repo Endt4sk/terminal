@@ -655,6 +655,7 @@ namespace winrt::TerminalApp::implementation
     //   Notes link, send feedback link and privacy policy link.
     void TerminalPage::_ShowAboutDialog()
     {
+        AboutDialog().QueueUpdateCheck();
         _ShowDialogHelper(L"AboutDialog");
     }
 
@@ -666,22 +667,6 @@ namespace winrt::TerminalApp::implementation
     winrt::hstring TerminalPage::ApplicationVersion()
     {
         return CascadiaSettings::ApplicationVersion();
-    }
-
-    void TerminalPage::_SendFeedbackOnClick(const IInspectable& /*sender*/, const Windows::UI::Xaml::Controls::ContentDialogButtonClickEventArgs& /*eventArgs*/)
-    {
-#if defined(WT_BRANDING_RELEASE)
-        ShellExecute(nullptr, nullptr, L"https://go.microsoft.com/fwlink/?linkid=2125419", nullptr, nullptr, SW_SHOW);
-#else
-        ShellExecute(nullptr, nullptr, L"https://go.microsoft.com/fwlink/?linkid=2204904", nullptr, nullptr, SW_SHOW);
-#endif
-    }
-
-    void TerminalPage::_ThirdPartyNoticesOnClick(const IInspectable& /*sender*/, const Windows::UI::Xaml::RoutedEventArgs& /*eventArgs*/)
-    {
-        std::filesystem::path currentPath{ wil::GetModuleFileNameW<std::wstring>(nullptr) };
-        currentPath.replace_filename(L"NOTICE.html");
-        ShellExecute(nullptr, nullptr, currentPath.c_str(), nullptr, nullptr, SW_SHOW);
     }
 
     // Method Description:
