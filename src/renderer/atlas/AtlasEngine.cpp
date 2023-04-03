@@ -83,8 +83,8 @@ try
         _api.invalidatedCursorArea.bottom = clamp(_api.invalidatedCursorArea.bottom, _api.invalidatedCursorArea.top, _p.s->cellCount.y);
     }
     {
-        _api.invalidatedRows.x = std::min(_api.invalidatedRows.x, _p.s->cellCount.y);
-        _api.invalidatedRows.y = clamp(_api.invalidatedRows.y, _api.invalidatedRows.x, _p.s->cellCount.y);
+        _api.invalidatedRows.start = std::min(_api.invalidatedRows.start, _p.s->cellCount.y);
+        _api.invalidatedRows.end = clamp(_api.invalidatedRows.end, _api.invalidatedRows.start, _p.s->cellCount.y);
     }
     {
         const auto limit = gsl::narrow_cast<i16>(_p.s->cellCount.y & 0x7fff);
@@ -94,7 +94,7 @@ try
     // Scroll the buffer by the given offset and mark the newly uncovered rows as "invalid".
     if (const auto offset = _api.scrollOffset)
     {
-        const auto nothingInvalid = _api.invalidatedRows.x == _api.invalidatedRows.y;
+        const auto nothingInvalid = _api.invalidatedRows.start == _api.invalidatedRows.end;
 
         if (offset < 0)
         {
@@ -105,8 +105,8 @@ try
             // |xxxxxxx   |    |          |
             // +----------+    +----------+
             const u16 begRow = _p.s->cellCount.y + offset;
-            _api.invalidatedRows.x = nothingInvalid ? begRow : std::min(_api.invalidatedRows.x, begRow);
-            _api.invalidatedRows.y = _p.s->cellCount.y;
+            _api.invalidatedRows.start = nothingInvalid ? begRow : std::min(_api.invalidatedRows.start, begRow);
+            _api.invalidatedRows.end = _p.s->cellCount.y;
 
             const auto dst = std::copy_n(_p.rows.begin() - offset, _p.rows.size() + offset, _p.rowsScratch.begin());
             std::copy_n(_p.rows.begin(), -offset, dst);
@@ -120,8 +120,8 @@ try
             // |          |    |xxxxxxx   |
             // +----------+    +----------+
             const u16 endRow = offset;
-            _api.invalidatedRows.x = 0;
-            _api.invalidatedRows.y = nothingInvalid ? endRow : std::max(_api.invalidatedRows.y, endRow);
+            _api.invalidatedRows.start = 0;
+            _api.invalidatedRows.end = nothingInvalid ? endRow : std::max(_api.invalidatedRows.end, endRow);
 
             const auto dst = std::copy_n(_p.rows.end() - offset, offset, _p.rowsScratch.begin());
             std::copy_n(_p.rows.begin(), _p.rows.size() - offset, dst);
@@ -146,9 +146,9 @@ try
 
     _api.dirtyRect = {
         0,
-        _api.invalidatedRows.x,
+        _api.invalidatedRows.start,
         _p.s->cellCount.x,
-        _api.invalidatedRows.y,
+        _api.invalidatedRows.end,
     };
 
     _p.dirtyRectInPx = {
@@ -161,7 +161,7 @@ try
     _p.cursorRect = {};
     _p.scrollOffset = _api.scrollOffset;
 
-    if (_api.invalidatedRows.x != _api.invalidatedRows.y)
+    if (_api.invalidatedRows.start != _api.invalidatedRows.end)
     {
         const auto deltaPx = _api.scrollOffset * _p.s->font->cellSize.y;
         const til::CoordType targetSizeX = _p.s->targetSize.x;
@@ -169,16 +169,16 @@ try
         u16 y = 0;
 
         _p.dirtyRectInPx.left = 0;
-        _p.dirtyRectInPx.top = _api.invalidatedRows.x * _p.s->font->cellSize.y;
+        _p.dirtyRectInPx.top = _api.invalidatedRows.start * _p.s->font->cellSize.y;
         _p.dirtyRectInPx.right = targetSizeX;
-        _p.dirtyRectInPx.bottom = _api.invalidatedRows.y * _p.s->font->cellSize.y;
+        _p.dirtyRectInPx.bottom = _api.invalidatedRows.end * _p.s->font->cellSize.y;
 
         for (const auto r : _p.rows)
         {
             r->dirtyTop += deltaPx;
             r->dirtyBottom += deltaPx;
 
-            if (y >= _api.invalidatedRows.x && y < _api.invalidatedRows.y)
+            if (_api.invalidatedRows.contains(y))
             {
                 const auto clampedTop = clamp(r->dirtyTop, 0, targetSizeY);
                 const auto clampedBottom = clamp(r->dirtyBottom, 0, targetSizeY);
@@ -197,7 +197,7 @@ try
         // I feel a little bit like this is a hack, but I'm not sure how to better express this.
         // This ensures that we end up calling Present1() without dirty rects if the swap chain is
         // recreated/resized, because DXGI requires you to then call Present1() without dirty rects.
-        if (_api.invalidatedRows.x == 0 && _api.invalidatedRows.y == _p.s->cellCount.y)
+        if (_api.invalidatedRows == range<u16>{ 0, _p.s->cellCount.y })
         {
             _p.dirtyRectInPx.top = 0;
             _p.dirtyRectInPx.bottom = targetSizeY;
@@ -297,7 +297,7 @@ try
     }
 
     {
-        std::fill(_api.colorsForeground.begin() + x, _api.colorsForeground.begin() + column, _api.currentColor.x);
+        std::fill(_api.colorsForeground.begin() + x, _api.colorsForeground.begin() + column, _api.currentForeground);
     }
 
     {
@@ -305,7 +305,7 @@ try
         const auto backgroundRow = _p.backgroundBitmap.begin() + _p.backgroundBitmapStride * y;
         auto it = backgroundRow + x;
         const auto end = backgroundRow + (static_cast<size_t>(column) << shift);
-        const auto bg = u32ColorPremultiply(_api.currentColor.y);
+        const auto bg = u32ColorPremultiply(_api.currentBackground);
 
         for (; it != end; ++it)
         {
@@ -420,8 +420,6 @@ try
 
     if (!isSettingDefaultBrushes)
     {
-        const u32x2 newColors{ gsl::narrow_cast<u32>(fg), gsl::narrow_cast<u32>(bg) };
-
         auto attributes = FontRelevantAttributes::None;
         WI_SetFlagIf(attributes, FontRelevantAttributes::Bold, textAttributes.IsIntense() && renderSettings.GetRenderMode(RenderSettings::Mode::IntenseIsBold));
         WI_SetFlagIf(attributes, FontRelevantAttributes::Italic, textAttributes.IsItalic());
@@ -431,7 +429,8 @@ try
             _flushBufferLine();
         }
 
-        _api.currentColor = newColors;
+        _api.currentBackground = gsl::narrow_cast<u32>(bg);
+        _api.currentForeground = gsl::narrow_cast<u32>(fg);
         _api.attributes = attributes;
     }
     else if (textAttributes.BackgroundIsDefault() && bg != _api.s->misc->backgroundColor)
@@ -577,14 +576,13 @@ void AtlasEngine::_flushBufferLine()
 
     auto& row = *_p.rows[_api.lastPaintBufferLineCoord.y];
 
-    wil::com_ptr<IDWriteFontFace> mappedFontFace;
+    wil::com_ptr<IDWriteFontFace2> mappedFontFace;
 
 #pragma warning(suppress : 26494) // Variable 'mappedEnd' is uninitialized. Always initialize an object (type.5).
     for (u32 idx = 0, mappedEnd; idx < _api.bufferLine.size(); idx = mappedEnd)
     {
-        f32 scale = 1;
         u32 mappedLength = 0;
-        _mapCharacters(_api.bufferLine.data() + idx, gsl::narrow_cast<u32>(_api.bufferLine.size()) - idx, &mappedLength, &scale, mappedFontFace.put());
+        _mapCharacters(_api.bufferLine.data() + idx, gsl::narrow_cast<u32>(_api.bufferLine.size()) - idx, &mappedLength, mappedFontFace.put());
         mappedEnd = idx + mappedLength;
 
         if (!mappedFontFace)
@@ -608,10 +606,9 @@ void AtlasEngine::_flushBufferLine()
         // We can reuse idx here, as it'll be reset to "idx = mappedEnd" in the outer loop anyways.
         for (u32 complexityLength = 0; idx < mappedEnd; idx += complexityLength)
         {
-            BOOL isTextSimple;
+            BOOL isTextSimple = FALSE;
             THROW_IF_FAILED(_p.textAnalyzer->GetTextComplexity(_api.bufferLine.data() + idx, mappedEnd - idx, mappedFontFace.get(), &isTextSimple, &complexityLength, _api.glyphIndices.data()));
 
-#pragma warning(suppress : 4127)
             if (isTextSimple)
             {
                 for (size_t i = 0; i < complexityLength; ++i)
@@ -635,15 +632,19 @@ void AtlasEngine::_flushBufferLine()
         const auto indicesCount = row.glyphIndices.size();
         if (indicesCount > initialIndicesCount)
         {
-            row.mappings.emplace_back(std::move(mappedFontFace), _p.s->font->fontSize * scale, gsl::narrow_cast<u32>(initialIndicesCount), gsl::narrow_cast<u32>(indicesCount));
+            row.mappings.emplace_back(std::move(mappedFontFace), gsl::narrow_cast<u32>(initialIndicesCount), gsl::narrow_cast<u32>(indicesCount));
         }
     }
 }
 
-void AtlasEngine::_mapCharacters(const wchar_t* text, const u32 textLength, u32* mappedLength, float* scale, IDWriteFontFace** mappedFontFace) const
+void AtlasEngine::_mapCharacters(const wchar_t* text, const u32 textLength, u32* mappedLength, IDWriteFontFace2** mappedFontFace) const
 {
     TextAnalysisSource analysisSource{ text, textLength };
     const auto& textFormatAxis = _api.textFormatAxes[static_cast<size_t>(_api.attributes)];
+
+    // We don't read from scale anyways.
+#pragma warning(suppress : 26494) // Variable 'scale' is uninitialized. Always initialize an object (type.5).
+    f32 scale;
 
     if (textFormatAxis)
     {
@@ -656,7 +657,7 @@ void AtlasEngine::_mapCharacters(const wchar_t* text, const u32 textLength, u32*
             /* fontAxisValues     */ textFormatAxis.data(),
             /* fontAxisValueCount */ gsl::narrow_cast<u32>(textFormatAxis.size()),
             /* mappedLength       */ mappedLength,
-            /* scale              */ scale,
+            /* scale              */ &scale,
             /* mappedFontFace     */ reinterpret_cast<IDWriteFontFace5**>(mappedFontFace)));
     }
     else
@@ -676,11 +677,11 @@ void AtlasEngine::_mapCharacters(const wchar_t* text, const u32 textLength, u32*
             /* baseStretch        */ DWRITE_FONT_STRETCH_NORMAL,
             /* mappedLength       */ mappedLength,
             /* mappedFont         */ font.addressof(),
-            /* scale              */ scale));
+            /* scale              */ &scale));
 
         if (font)
         {
-            THROW_IF_FAILED(font->CreateFontFace(mappedFontFace));
+            THROW_IF_FAILED(font->CreateFontFace(reinterpret_cast<IDWriteFontFace**>(mappedFontFace)));
         }
     }
 }
@@ -838,8 +839,7 @@ void AtlasEngine::_mapReplacementCharacter(u32 from, u32 to, ShapedRow& row)
         bool succeeded = false;
 
         u32 mappedLength = 0;
-        f32 scale = 1.0f;
-        _mapCharacters(L"\uFFFD", 1, &mappedLength, &scale, _api.replacementCharacterFontFace.put());
+        _mapCharacters(L"\uFFFD", 1, &mappedLength, _api.replacementCharacterFontFace.put());
 
         if (mappedLength == 1)
         {
@@ -854,6 +854,11 @@ void AtlasEngine::_mapReplacementCharacter(u32 from, u32 to, ShapedRow& row)
         }
 
         _api.replacementCharacterLookedUp = true;
+    }
+
+    if (!_api.replacementCharacterFontFace)
+    {
+        return;
     }
 
     static constexpr auto isSoftFontChar = [](wchar_t ch) noexcept {
@@ -888,11 +893,11 @@ void AtlasEngine::_mapReplacementCharacter(u32 from, u32 to, ShapedRow& row)
         if (currentlyMappingSoftFont != nowMappingSoftFont)
         {
             const auto indicesCount = row.glyphIndices.size();
-            const auto fontFace = currentlyMappingSoftFont && softFontAvailable ? IDWriteFontFace_SoftFont : _api.replacementCharacterFontFace.get();
+            const auto fontFace = currentlyMappingSoftFont && softFontAvailable ? nullptr : _api.replacementCharacterFontFace.get();
 
-            if (indicesCount > initialIndicesCount && fontFace)
+            if (indicesCount > initialIndicesCount)
             {
-                row.mappings.emplace_back(fontFace, _p.s->font->fontSize, gsl::narrow_cast<u32>(initialIndicesCount), gsl::narrow_cast<u32>(indicesCount));
+                row.mappings.emplace_back(fontFace, gsl::narrow_cast<u32>(initialIndicesCount), gsl::narrow_cast<u32>(indicesCount));
                 initialIndicesCount = indicesCount;
             }
         }
@@ -904,11 +909,11 @@ void AtlasEngine::_mapReplacementCharacter(u32 from, u32 to, ShapedRow& row)
 
     {
         const auto indicesCount = row.glyphIndices.size();
-        const auto fontFace = currentlyMappingSoftFont && softFontAvailable ? IDWriteFontFace_SoftFont : _api.replacementCharacterFontFace.get();
+        const auto fontFace = currentlyMappingSoftFont && softFontAvailable ? nullptr : _api.replacementCharacterFontFace.get();
 
-        if (indicesCount > initialIndicesCount && fontFace)
+        if (indicesCount > initialIndicesCount)
         {
-            row.mappings.emplace_back(fontFace, _p.s->font->fontSize, gsl::narrow_cast<u32>(initialIndicesCount), gsl::narrow_cast<u32>(indicesCount));
+            row.mappings.emplace_back(fontFace, gsl::narrow_cast<u32>(initialIndicesCount), gsl::narrow_cast<u32>(indicesCount));
         }
     }
 }

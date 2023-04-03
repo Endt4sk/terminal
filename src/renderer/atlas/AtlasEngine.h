@@ -82,7 +82,7 @@ namespace Microsoft::Console::Render::Atlas
         void _recreateFontDependentResources();
         void _recreateCellCountDependentResources();
         void _flushBufferLine();
-        void _mapCharacters(const wchar_t* text, u32 textLength, u32* mappedLength, float* scale, IDWriteFontFace** mappedFontFace) const;
+        void _mapCharacters(const wchar_t* text, u32 textLength, u32* mappedLength, IDWriteFontFace2** mappedFontFace) const;
         void _mapComplex(IDWriteFontFace* mappedFontFace, u32 idx, u32 length, ShapedRow& row);
         __declspec(noinline) void _mapReplacementCharacter(u32 from, u32 to, ShapedRow& row);
 
@@ -100,8 +100,8 @@ namespace Microsoft::Console::Render::Atlas
         static constexpr i16 i16min = -0x8000;
         static constexpr i16 i16max = 0x7fff;
         static constexpr u16r invalidatedAreaNone = { u16max, u16max, u16min, u16min };
-        static constexpr u16x2 invalidatedRowsNone{ u16max, u16min };
-        static constexpr u16x2 invalidatedRowsAll{ u16min, u16max };
+        static constexpr range<u16> invalidatedRowsNone{ u16max, u16min };
+        static constexpr range<u16> invalidatedRowsAll{ u16min, u16max };
 
         std::unique_ptr<IBackend> _b;
         RenderingPayload _p;
@@ -117,7 +117,7 @@ namespace Microsoft::Console::Render::Atlas
             // These two are redundant with TargetSettings/MiscellaneousSettings, but that's because _resolveTransparencySettings()
             // turns the given settings into potentially different actual settings (which are then written into the Settings).
             bool enableTransparentBackground = false;
-            u8 antialiasingMode = DefaultAntialiasingMode;
+            AntialiasingMode antialiasingMode = DefaultAntialiasingMode;
 
             std::vector<wchar_t> bufferLine;
             std::vector<u16> bufferLineColumn;
@@ -132,7 +132,7 @@ namespace Microsoft::Console::Render::Atlas
             Buffer<f32> glyphAdvances;
             Buffer<DWRITE_GLYPH_OFFSET> glyphOffsets;
 
-            wil::com_ptr<IDWriteFontFace> replacementCharacterFontFace;
+            wil::com_ptr<IDWriteFontFace2> replacementCharacterFontFace;
             u16 replacementCharacterGlyphIndex = 0;
             bool replacementCharacterLookedUp = false;
 
@@ -140,9 +140,10 @@ namespace Microsoft::Console::Render::Atlas
             LineRendition lineRendition = LineRendition::SingleWidth;
             // UpdateDrawingBrushes()
             u32 backgroundOpaqueMixin = 0xff000000;
-            u32x2 currentColor;
+            u32 currentBackground = 0;
+            u32 currentForeground = 0;
             FontRelevantAttributes attributes = FontRelevantAttributes::None;
-            u16x2 lastPaintBufferLineCoord;
+            u16x2 lastPaintBufferLineCoord{};
             // UpdateHyperlinkHoveredId()
             u16 hyperlinkHoveredId = 0;
 
@@ -150,7 +151,7 @@ namespace Microsoft::Console::Render::Atlas
             til::rect dirtyRect;
             // These "invalidation" fields are reset in EndPaint()
             u16r invalidatedCursorArea = invalidatedAreaNone;
-            u16x2 invalidatedRows = invalidatedRowsNone; // x is treated as "top" and y as "bottom"
+            range<u16> invalidatedRows = invalidatedRowsNone; // x is treated as "top" and y as "bottom"
             i16 scrollOffset = 0;
         } _api;
     };

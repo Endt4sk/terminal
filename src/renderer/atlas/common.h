@@ -56,8 +56,10 @@ namespace Microsoft::Console::Render::Atlas
     template<typename T>
     struct vec2
     {
-        T x{};
-        T y{};
+        // These members aren't zero-initialized to make these trivial types,
+        // and allow the compiler to quickly memset() allocations, etc.
+        T x;
+        T y;
 
         ATLAS_POD_OPS(vec2)
     };
@@ -65,10 +67,12 @@ namespace Microsoft::Console::Render::Atlas
     template<typename T>
     struct vec4
     {
-        T x{};
-        T y{};
-        T z{};
-        T w{};
+        // These members aren't zero-initialized to make these trivial types,
+        // and allow the compiler to quickly memset() allocations, etc.
+        T x;
+        T y;
+        T z;
+        T w;
 
         ATLAS_POD_OPS(vec4)
     };
@@ -76,38 +80,44 @@ namespace Microsoft::Console::Render::Atlas
     template<typename T>
     struct rect
     {
-        T left{};
-        T top{};
-        T right{};
-        T bottom{};
+        // These members aren't zero-initialized to make these trivial types,
+        // and allow the compiler to quickly memset() allocations, etc.
+        T left;
+        T top;
+        T right;
+        T bottom;
 
         ATLAS_POD_OPS(rect)
 
         constexpr bool empty() const noexcept
         {
-            return (left >= right) || (top >= bottom);
+            return left >= right || top >= bottom;
         }
 
         constexpr bool non_empty() const noexcept
         {
-            return (left < right) && (top < bottom);
+            return left < right && top < bottom;
         }
     };
 
     template<typename T>
     struct range
     {
-        T start{};
-        T end{};
+        T start;
+        T end;
 
         ATLAS_POD_OPS(range)
+
+        constexpr bool contains(T v) const noexcept
+        {
+            return v >= start && v < end;
+        }
     };
 
     using u8 = uint8_t;
 
     using u16 = uint16_t;
     using u16x2 = vec2<u16>;
-    using u16x4 = vec4<u16>;
     using u16r = rect<u16>;
 
     using i16 = int16_t;
@@ -290,7 +300,14 @@ namespace Microsoft::Console::Render::Atlas
         bool useSoftwareRendering = false;
     };
 
-    inline constexpr auto DefaultAntialiasingMode = D2D1_TEXT_ANTIALIAS_MODE_CLEARTYPE;
+    enum class AntialiasingMode : u8
+    {
+        ClearType = D2D1_TEXT_ANTIALIAS_MODE_CLEARTYPE,
+        Grayscale = D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE,
+        Aliased = D2D1_TEXT_ANTIALIAS_MODE_ALIASED,
+    };
+
+    inline constexpr auto DefaultAntialiasingMode = AntialiasingMode::ClearType;
 
     struct FontSettings
     {
@@ -309,10 +326,10 @@ namespace Microsoft::Console::Render::Atlas
         u16 underlineWidth = 0;
         u16 strikethroughPos = 0;
         u16 strikethroughWidth = 0;
-        u16x2 doubleUnderlinePos;
+        u16x2 doubleUnderlinePos{};
         u16 thinLineWidth = 0;
         u16 dpi = 96;
-        u8 antialiasingMode = DefaultAntialiasingMode;
+        AntialiasingMode antialiasingMode = DefaultAntialiasingMode;
 
         std::vector<uint16_t> softFontPattern;
         til::size softFontCellSize;
@@ -341,8 +358,8 @@ namespace Microsoft::Console::Render::Atlas
         til::generational<FontSettings> font;
         til::generational<CursorSettings> cursor;
         til::generational<MiscellaneousSettings> misc;
-        u16x2 targetSize;
-        u16x2 cellCount;
+        u16x2 targetSize{};
+        u16x2 cellCount{};
     };
 
     using GenerationalSettings = til::generational<Settings>;
@@ -366,121 +383,9 @@ namespace Microsoft::Console::Render::Atlas
     };
     ATLAS_FLAG_OPS(FontRelevantAttributes, u8)
 
-    // This fake IDWriteFontFace* is a place holder that is used when we draw DECDLD/DRCS soft fonts. It's wildly
-    // invalid C++, but I wrote the alternative, proper code with bitfields/flags and such and it turned into a
-    // bigger mess than this violation against the C++ consortium's conscience. It also didn't help BackendD3D,
-    // which hashes FontFace and an additional flag field would double the hashmap key size due to padding.
-    // It's a macro, because constexpr doesn't work here in C++20 and regular "const" doesn't inline.
-#define IDWriteFontFace_SoftFont (static_cast<IDWriteFontFace*>(nullptr) + 1)
-
-    // The existence of IDWriteFontFace_SoftFont unfortunately requires us to reimplement wil::com_ptr<IDWriteFontFace>.
-    //
-    // Unfortunately this code seems to confuse MSVC's linter? The 3 smart pointer warnings are somewhat funny.
-    // It doesn't understand that this class is a smart pointer itself. The other 2 are valid, but don't apply here.
-#pragma warning(push)
-#pragma warning(disable : 26415) // Smart pointer parameter 'other' is used only to access contained pointer. Use T* or T& instead (r.30).
-#pragma warning(disable : 26416) // Shared pointer parameter 'other' is passed by rvalue reference. Pass by value instead (r.34).
-#pragma warning(disable : 26418) // Shared pointer parameter 'other' is not copied or moved. Use T* or T& instead (r.36).
-#pragma warning(disable : 26447) // The function is declared 'noexcept' but calls function '...' which may throw exceptions (f.6).)
-#pragma warning(disable : 26481) // Don't use pointer arithmetic. Use span instead (bounds.1).
-    struct FontFace
-    {
-        FontFace() = default;
-
-        ~FontFace() noexcept
-        {
-            _release();
-        }
-
-        FontFace(const FontFace& other) noexcept :
-            FontFace{ other.get() }
-        {
-        }
-
-        FontFace(FontFace&& other) noexcept :
-            _ptr{ other.detach() }
-        {
-        }
-
-        FontFace& operator=(const FontFace& other) noexcept
-        {
-            _release();
-            _ptr = other.get();
-            _addRef();
-            return *this;
-        }
-
-        FontFace& operator=(FontFace&& other) noexcept
-        {
-            _release();
-            _ptr = other.detach();
-            return *this;
-        }
-
-        FontFace(IDWriteFontFace* ptr) noexcept :
-            _ptr{ ptr }
-        {
-            _addRef();
-        }
-
-        FontFace(const wil::com_ptr<IDWriteFontFace>& other) noexcept :
-            FontFace{ other.get() }
-        {
-        }
-
-        FontFace(wil::com_ptr<IDWriteFontFace>&& other) noexcept :
-            _ptr{ other.detach() }
-        {
-        }
-
-        void attach(IDWriteFontFace* other) noexcept
-        {
-            _release();
-            _ptr = other;
-        }
-
-        [[nodiscard]] IDWriteFontFace* detach() noexcept
-        {
-            const auto tmp = _ptr;
-            _ptr = nullptr;
-            return tmp;
-        }
-
-        IDWriteFontFace* get() const noexcept
-        {
-            return _ptr;
-        }
-
-        bool is_proper_font() const noexcept
-        {
-            return _ptr > IDWriteFontFace_SoftFont;
-        }
-
-    private:
-        void _addRef() const noexcept
-        {
-            if (is_proper_font())
-            {
-                _ptr->AddRef();
-            }
-        }
-
-        void _release() const noexcept
-        {
-            if (is_proper_font())
-            {
-                _ptr->Release();
-            }
-        }
-
-        IDWriteFontFace* _ptr = nullptr;
-    };
-#pragma warning(pop)
-
     struct FontMapping
     {
-        FontFace fontFace;
-        f32 fontEmSize = 0;
+        wil::com_ptr<IDWriteFontFace2> fontFace;
         u32 glyphsFrom = 0;
         u32 glyphsTo = 0;
     };
@@ -553,6 +458,9 @@ namespace Microsoft::Console::Render::Atlas
         Buffer<ShapedRow> unorderedRows;
         // This is used as a scratch buffer during scrolling.
         Buffer<ShapedRow*> rowsScratch;
+        // This contains the rows in the right order from row 0 to N.
+        // They get rotated around when we scroll the buffer. Technically
+        // we could also implement scrolling by using a circular array.
         Buffer<ShapedRow*> rows;
         // This stride (width) of the backgroundBitmap is a "count" of u32 and not in bytes.
         size_t backgroundBitmapStride = 0;
@@ -560,11 +468,13 @@ namespace Microsoft::Console::Render::Atlas
         // 1 ensures that the backends redraw the background, even if the background is
         // entirely black, just like `backgroundBitmap` is all back after it gets created.
         til::generation_t backgroundBitmapGeneration{ 1 };
-
-        u16r cursorRect;
-
+        // In columns/rows.
+        til::rect cursorRect;
+        // In pixel.
         til::rect dirtyRectInPx;
-        u16x2 invalidatedRows;
+        // In rows.
+        range<u16> invalidatedRows{};
+        // In pixel.
         i16 scrollOffset = 0;
 
         void MarkAllAsDirty() noexcept
